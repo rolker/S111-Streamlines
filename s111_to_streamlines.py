@@ -149,13 +149,20 @@ class JobardLefer:
             dSepEffective = self.dSep*self.levelFactor
             
             for sl in self.streamlines:
-                if self.extend(sl):
-                    self.addStreamline(sl)
+                self.extend(sl)
+                # following seems to be a no-op now, maybe at some point, addStreamline did something to
+                # points in a streamline that already existed, such add the points to the points grid? 
+                #if self.extend(sl):
+                #    self.addStreamline(sl)
                     
             slStart = 0
             keptSeeds = []
             for seed in seedCache:
-                for sl in self.streamlines[slStart:]:
+                sli = slStart
+                while sli < len(self.streamlines):
+                    sl = self.streamlines[sli]
+                    sli += 1
+                    # this looks for candidate seed points as described in JL paper fig 3
                     for pn in range(0,len(sl.points),self.iSteps*self.levelFactor):
                       dir = sl.points[pn].flow.direction
                       # check either side (perpendicularly) of the streamline for new seed points.
