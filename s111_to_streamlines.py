@@ -483,7 +483,7 @@ class FlowField():
             
         
     def getFlowAtIndex(self,x,y):
-        if x >= 0 and x < self.data.attrs['numPointsLongitudinal'] and y >= 0 and y < self.data.attrs['numPointsLatitudinal']:
+        if x >= 0 and x < self.data.attrs['numberPointsLong'] and y >= 0 and y < self.data.attrs['numberPointsLat']:
             speed = self.data[self.timestep]['Speed'][y,x]
             dir = self.data[self.timestep]['Direction'][y,x]
             if speed >= 0.0:
