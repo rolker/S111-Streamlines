@@ -704,7 +704,7 @@ for key in dataset.keys():
         sldicts.append(sl.asDict())
     streamlines['streamlines'] = sldicts
     streamlines['time'] = val.isoformat()
-    streamlines['label'] = key
+    streamlines['label'] = val.isoformat()
     streamlines['bounds'] = bounds.asDict()
     datasets.append(streamlines)
 
