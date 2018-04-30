@@ -32,7 +32,7 @@ class Streamline:
         if direction > 0:
             self.points.append(p)
         else:
-            self.points.insert(0,p)
+            self.points.insert(0,p) 
             self.seedIndex += 1
 
         self.bounds.add(p)
@@ -80,13 +80,13 @@ class JobardLefer:
         '''
         self.field = field
         self.bounds = field.bounds
-        print self.bounds
+        print(self.bounds)
 
         density = field.getDensity()
-        print 'density:',density
+        print('density:',density)
         self.dSep = density * self.separationFactor
         self.dTest = self.dSep*self.testFactor
-        print 'dSep:',self.dSep,'dTest:',self.dTest
+        print('dSep:',self.dSep,'dTest:',self.dTest)
 
         # calculate the grid size for the points grid based on dSep where
         # lat is closest to the equator and diff in long is largest
@@ -102,10 +102,10 @@ class JobardLefer:
         dy = pdy.y - p0.y
         
         self.pointsGridCellSpacing = Point(dx, dy)
-        print 'points grid cell spacing:',self.pointsGridCellSpacing
+        print('points grid cell spacing:',self.pointsGridCellSpacing)
         
         size = self.bounds.getSize()
-        print 'size:',size
+        print('size:',size)
         
 
 
@@ -118,12 +118,12 @@ class JobardLefer:
         self.minLevel = 0;
         dSepMax = min(size.x/self.pointsGridCellSpacing.x,size.y/self.pointsGridCellSpacing.y)/self.dSepMaxFactor
         self.minLevel = int(-math.floor(math.log(dSepMax,2)))
-        print 'min level:',self.minLevel
+        print('min level:',self.minLevel)
         
         # In Jobard-Lefer paper, all the seeds are generated from the initial streamline.                 
         seedCache = []
         seedSpacing = Point(max(self.pointsGridCellSpacing.x*2,size.x/250),max(self.pointsGridCellSpacing.y*2,size.y/250))
-        print 'seedSpacing:',seedSpacing
+        print('seedSpacing:',seedSpacing)
         center = self.bounds.getCenter()
         x = seedSpacing.x/2.0
         while x < size.x/2.0:
@@ -143,8 +143,8 @@ class JobardLefer:
         for level in range(self.minLevel,1):
             self.level = level
             self.levelFactor = int(2**(-level))
-            print level,self.levelFactor
-            print '  seed cache size:',len(seedCache)
+            print(level,self.levelFactor)
+            print('  seed cache size:',len(seedCache))
             # dSepEffective is dSep scaled for the current zoom level
             dSepEffective = self.dSep*self.levelFactor
             
@@ -392,8 +392,16 @@ class FlowField():
 
         self.dx = math.radians(self.data.attrs['gridSpacingLongitudinal'])
         self.dy = math.radians(self.data.attrs['gridSpacingLatitudinal'])
-        self.minPoint = Point(self.data.attrs['westBoundLongitude'],self.data.attrs['southBoundLatitude']).radians()
-        self.maxPoint = Point(self.data.attrs['eastBoundLongitude'],self.data.attrs['northBoundLatitude']).radians()
+
+        '''there is a one to one replacement for the westBoundLongitude and the southBoundLatitude - no extra calculations needed'''    
+        self.minPoint = Point(self.data.attrs['gridOriginLongitude'],self.data.attrs['gridOriginLatitude']).radians()
+        
+        '''TO DO: need to change north,east bound attributes....these attributes are not in the latest s111 standards'''
+        '''need to calculate the eastBoundLongitude and the northBoundLatitude points from the grid spacing and number of points in each direction'''
+        
+        eastBoundLongitude = self.data.attrs['gridOriginLongitude'] + (self.data.attrs['gridSpacingLongitudinal'] * self.data.attrs['numPointsLongitudinal'])
+        northBoundLatitude = self.data.attrs['gridOriginLatitude'] + (self.data.attrs['gridSpacingLatitudinal'] * self.data.attrs['numPointsLatitudinal'])
+        self.maxPoint = Point(eastBoundLongitude,northBoundLatitude).radians()
         
         self.bounds = Bounds()
         self.bounds.add(self.minPoint)
@@ -483,9 +491,9 @@ class FlowField():
             
         
     def getFlowAtIndex(self,x,y):
-        if x >= 0 and x < self.data.attrs['numberPointsLong'] and y >= 0 and y < self.data.attrs['numberPointsLat']:
-            speed = self.data[self.timestep]['Speed'][y,x]
-            dir = self.data[self.timestep]['Direction'][y,x]
+        if x >= 0 and x < self.data.attrs['numPointsLongitudinal'] and y >= 0 and y < self.data.attrs['numPointsLatitudinal']:
+            speed = self.data[self.timestep]['surfaceCurrentSpeed'][y,x]
+            dir = self.data[self.timestep]['surfaceCurrentDirection'][y,x]
             if speed >= 0.0:
                 return Flow(speed,math.radians(dir))
             
@@ -686,7 +694,7 @@ dataset = h5py.File(infile)
 
 for key in dataset.keys():
     val = dateutil.parser.parse(dataset[key].attrs['DateTime'])
-    print key,val
+    print(key,val)
     
     dataModel = FlowField(dataset,key)
 
@@ -709,7 +717,7 @@ for key in dataset.keys():
     datasets.append(streamlines)
 
 jsonout = json.dumps(datasets,indent=2)
-#print jsonout
+#print(jsonout)
 
 if jsonfn is not None:
   file(jsonfn,'w').write(jsonout)
