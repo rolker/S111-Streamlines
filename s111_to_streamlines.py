@@ -32,7 +32,7 @@ class Streamline:
         if direction > 0:
             self.points.append(p)
         else:
-            self.points.insert(0,p) 
+            self.points.insert(0,p)
             self.seedIndex += 1
 
         self.bounds.add(p)
@@ -67,6 +67,14 @@ class JobardLefer:
 
     def generate(self,field):
         '''Generates the streamlines for the given field.
+            Once a seed point has been selected in a field, they make a streamline growing beyond that point backward and forward.
+            The growing process is stopped when the streamline reaches an edge of the surface, a singularity in the field (source or sink)
+            or becomes too close to another streamline. (for rendering: The streamline is then divided into a set of small segments of contrasting color and
+            projected onto the surface)
+
+            Computing a new streamline is achieved in the following manner. A new seed point is chosen at a minimal distance apart from all existing streamlines.
+            Then a new streamline is integrated beyond the seed point backward and forward until either it goes too close from another streamlines or it leaves
+            the 2D domain over which the computation takes place. The algorithm ends when no more valid seed points can be found.
         
         Args:
             field (Field): The field for which streamlines will be generated.
@@ -75,16 +83,22 @@ class JobardLefer:
             Dictionary with streamlines and some parameters.
             
             - streamlines (array): The generated streamlines.
-            - dSep: The dSep parameter used to generate the streamlines.
+            - dSep: The dSep parameter used to generate the streamlines. It is the separating distance given by the user.
+                    It represents the minimal distance between seed points and streamlines.
             - iSteps: The number of intermediate points used while generating the streamlines.
+
+        Notes: dTest: is a percentage of dSep. It corresponds to the minimal distance under which integration of the streamlines will be stopped in the current direction.
+                       typically, dTest = dSep * .05 gives good visual results by producing long streamlines.
         '''
         self.field = field
         self.bounds = field.bounds
-        print(self.bounds)
+        print('field: ',self.field)
+        
+        print('bounds: ',self.bounds)
 
         density = field.getDensity()
         print('density:',density)
-        self.dSep = density * self.separationFactor
+        self.dSep = density * self.separationFactor 
         self.dTest = self.dSep*self.testFactor
         print('dSep:',self.dSep,'dTest:',self.dTest)
 
@@ -94,7 +108,8 @@ class JobardLefer:
             minLat = 0.0
         else:
             minLat = min(abs(self.bounds.min.y),abs(self.bounds.max.y))
-            
+
+        print('minLat: ',minLat)
         p0 = Point(0,minLat)
         pdx = positionFromDistanceCourse(p0, self.dSep, 1.5708)
         pdy = positionFromDistanceCourse(p0, self.dSep, 0.0)
@@ -107,8 +122,6 @@ class JobardLefer:
         size = self.bounds.getSize()
         print('size:',size)
         
-
-
         self.pointsGrid = {}
         
         # As the latitude varies in the points grid, its coverage relative to dSep varies,
@@ -120,26 +133,34 @@ class JobardLefer:
         self.minLevel = int(-math.floor(math.log(dSepMax,2)))
         print('min level:',self.minLevel)
         
-        # In Jobard-Lefer paper, all the seeds are generated from the initial streamline.                 
+        # In Jobard-Lefer paper, all the seeds are generated from the initial streamline.
+        #http://web.cs.ucdavis.edu/~ma/SIGGRAPH02/course23/notes/papers/Jobard.pdf
         seedCache = []
         seedSpacing = Point(max(self.pointsGridCellSpacing.x*2,size.x/250),max(self.pointsGridCellSpacing.y*2,size.y/250))
         print('seedSpacing:',seedSpacing)
         center = self.bounds.getCenter()
         x = seedSpacing.x/2.0
+        #print('x:',x)
         while x < size.x/2.0:
             y = seedSpacing.y/2.0
+            #print('y:',y)
             while y < size.y/2.0:
                 for i in range(-1,2,2):
                     for j in range(-1,2,2):
                         seed = Point(center.x+x*i,center.y+y*j)
-                        if field.pointHasValue(seed):
+                        #print('seed:', seed)
+                        #FIX: none of the seeds are valid - how to make sure seeds are valid? Are the seeds indexes into the data flow field? The seed values rarely change
+                        #NOTE: why is this one field.pointHasValue and not self.field.pointHasValue!?
+                        
+                        if self.field.pointHasValue(seed):                            
                             seedCache.append(seed)
                         else:
                             pass
                 y += seedSpacing.y
             x += seedSpacing.x
-        
+        print('seed cache: ',seedCache)
         self.streamlines = []
+        #QUESTION: why is the range only until 1? How are these values related to the incoming data?
         for level in range(self.minLevel,1):
             self.level = level
             self.levelFactor = int(2**(-level))
@@ -163,7 +184,7 @@ class JobardLefer:
                     sl = self.streamlines[sli]
                     sli += 1
                     # this looks for candidate seed points as described in JL paper fig 3
-                    for pn in range(0,len(sl.points),self.iSteps*self.levelFactor):
+                    for pn in range(0,len(sl.points),self.iSteps*self.levelFactor):                      
                       dir = sl.points[pn].flow.direction
                       # check either side (perpendicularly) of the streamline for new seed points.
                       for k in range(2):
@@ -175,7 +196,7 @@ class JobardLefer:
                                   self.addStreamline(newSl)
                 slStart = len(self.streamlines)
                 if self.isPointGood(seed, dSepEffective):
-                    #print seed,seed.flow.direction,seed.flow.u,seed.flow.v
+                   # print(seed,seed.flow.direction,seed.flow.u,seed.flow.v)
                     newSl = Streamline(seed,self.level)
                     self.extend(newSl)
                     if len(newSl.points)>2:
@@ -386,22 +407,19 @@ class Flow():
 class FlowField():
     '''A field representing currents.
     '''
-    def __init__(self,data,timestep):
+    def __init__(self,data,timestep, metadata):
         self.data = data
+        self.metadata = metadata #TODO: eventually, copy over just the metadata portion...this is sending the entire group of the timeseries!
         self.timestep = timestep
-
-        self.dx = math.radians(self.data.attrs['gridSpacingLongitudinal'])
-        self.dy = math.radians(self.data.attrs['gridSpacingLatitudinal'])
-
-        '''there is a one to one replacement for the westBoundLongitude and the southBoundLatitude - no extra calculations needed'''    
-        self.minPoint = Point(self.data.attrs['gridOriginLongitude'],self.data.attrs['gridOriginLatitude']).radians()
+    
+        self.dx = math.radians(self.metadata.attrs['gridSpacingLongitudinal'])
+        self.dy = math.radians(self.metadata.attrs['gridSpacingLatitudinal'])
         
-        '''TO DO: need to change north,east bound attributes....these attributes are not in the latest s111 standards'''
-        '''need to calculate the eastBoundLongitude and the northBoundLatitude points from the grid spacing and number of points in each direction'''
-        
-        eastBoundLongitude = self.data.attrs['gridOriginLongitude'] + (self.data.attrs['gridSpacingLongitudinal'] * self.data.attrs['numPointsLongitudinal'])
-        northBoundLatitude = self.data.attrs['gridOriginLatitude'] + (self.data.attrs['gridSpacingLatitudinal'] * self.data.attrs['numPointsLatitudinal'])
-        self.maxPoint = Point(eastBoundLongitude,northBoundLatitude).radians()
+        self.minPoint = Point(self.metadata.attrs['westBoundLongitude'],self.metadata.attrs['southBoundLatitude']).radians()
+        self.maxPoint = Point(self.metadata.attrs['eastBoundLongitude'],self.metadata.attrs['northBoundLatitude']).radians()
+        print("init flowField: hdf5 bounds")
+        print(self.metadata.attrs['westBoundLongitude'],self.metadata.attrs['southBoundLatitude'])
+        print(self.metadata.attrs['eastBoundLongitude'],self.metadata.attrs['northBoundLatitude'])
         
         self.bounds = Bounds()
         self.bounds.add(self.minPoint)
@@ -441,7 +459,7 @@ class FlowField():
         return ret
 
     def pointHasValue(self,p):
-        '''Checks is a flow value exists for a given points, adding it to the point if it exists.
+        '''Checks if a flow value exists for a given points, adding it to the point if it exists.
         
         Args:
             p (Point): Geographic position where flow values is desired.
@@ -450,6 +468,7 @@ class FlowField():
             True if flow exists at given position, False otherwise. If flow exists, it is attached
             to input parameter p.
         '''
+       
         if p is None:
             return None
         if not 'flow' in p.__dict__:
@@ -489,14 +508,17 @@ class FlowField():
             return ret
             
             
+            
         
     def getFlowAtIndex(self,x,y):
-        if x >= 0 and x < self.data.attrs['numPointsLongitudinal'] and y >= 0 and y < self.data.attrs['numPointsLatitudinal']:
-            speed = self.data[self.timestep]['surfaceCurrentSpeed'][y,x]
-            dir = self.data[self.timestep]['surfaceCurrentDirection'][y,x]
+        #if x >= 0 and x < self.data.attrs['numberPointsLong'] and y >= 0 and y < self.data.attrs['numberPointsLat']:
+        if x >= 0 and x < self.metadata.attrs['numPointsLongitudinal'] and y >= 0 and y < self.metadata.attrs['numPointsLatitudinal']:
+            speed = self.data['values'][y,x,'SurfaceCurrentSpeed']
+            dir = self.data['values'][y,x,'SurfaceCurrentDirection']
+            #speed = self.data[self.timestep]['Speed'][y,x]
+            #dir = self.data[self.timestep]['Direction'][y,x]            
             if speed >= 0.0:
-                return Flow(speed,math.radians(dir))
-            
+                return Flow(speed,math.radians(dir))            
 
     def getIndex(self,p):
         return ((p.x-self.minPoint.x)/self.dx,(p.y-self.minPoint.y)/self.dy)
@@ -680,11 +702,9 @@ class Bounds:
         dmax = self.max.degrees()
         return {'min':{'x':dmin.x, 'y':dmin.y}, 'max':{'x':dmax.x, 'y':dmax.y}}
 
-
-
-
 infile = sys.argv[1]
 jsonfn = infile+'.json'
+jfile=open(jsonfn,"w")
 
 datasets = []
 
@@ -692,35 +712,59 @@ jlContext = JobardLefer()
     
 dataset = h5py.File(infile)
 
-for key in dataset.keys():
-    val = dateutil.parser.parse(dataset[key].attrs['DateTime'])
-    print(key,val)
-    
-    dataModel = FlowField(dataset,key)
+surfcurGroup = dataset['SurfaceCurrent']
+#print(type(surfcurGroup))
+#NOTE: the group "SurfaceCurrent" contains sets of surface current data, each in a different geographical location
+for key in surfcurGroup:
+    if key != 'axisNames':
+        groups = surfcurGroup[key]
+        #print(type(groups))
+        i = 0
+        #meta
+        #this loops through the time series data for each location
+        for groupName in groups:
+            #print(groupName)
+            group = groups[groupName]
+            #each surface current group will need to have it's own flow field, more than one is a timeseries            
+            #'DateTime' no longer in s111 version as of 5/22/18
+            val = dateutil.parser.parse(group.attrs['timePoint'])
+            #timestamp is really the name of the group in FlowField which in current s111 version is just Group_###
+            #print(val)            
 
-    # generate returns dictionary with streamlines and some parameters (dSep and iSteps, which are related to spacing of the streamlines)
-    streamlines = jlContext.generate(dataModel)
-    
-    # Turn the streamlines into a python dictionary representation so the output can be tuned into a json file.
-    # The json file can be used with a browser based representation overlaid on Google Maps.
-    sldicts = []
-    bounds = Bounds()
-    for sl in streamlines['streamlines']:
-        b = sl.bounds
-        bounds.add(b.min)
-        bounds.add(b.max)
-        sldicts.append(sl.asDict())
-    streamlines['streamlines'] = sldicts
-    streamlines['time'] = val.isoformat()
-    streamlines['label'] = val.isoformat()
-    streamlines['bounds'] = bounds.asDict()
-    datasets.append(streamlines)
-
+            dataModel = FlowField(group,groupName,groups)
+            i=i+1
+            #print(i)
+            
+##
+##    # generate returns dictionary with streamlines and some parameters (dSep and iSteps, which are related to spacing of the streamlines)
+            streamlines = jlContext.generate(dataModel)
+            print('streamlines created')
+            print(streamlines)
+            
+            
+##        
+##    # Turn the streamlines into a python dictionary representation so the output can be tuned into a json file.
+##    # The json file can be used with a browser based representation overlaid on Google Maps.
+            sldicts = []
+            bounds = Bounds()
+            for sl in streamlines['streamlines']:
+                b = sl.bounds
+                bounds.add(b.min)
+                bounds.add(b.max)
+                sldicts.append(sl.asDict())
+                streamlines['streamlines'] = sldicts
+                streamlines['time'] = val.isoformat()
+                streamlines['label'] = val.isoformat()
+                streamlines['bounds'] = bounds.asDict()
+                datasets.append(streamlines)
+            break
+##
 jsonout = json.dumps(datasets,indent=2)
 #print(jsonout)
 
-if jsonfn is not None:
-  file(jsonfn,'w').write(jsonout)
+if jfile is not None:    
+  #file(jsonfn,'w').write(jsonout)
+    jfile.write(jsonout)
   #shutil.copy(jsonfn, jsonfn_latest)
   
     
