@@ -710,7 +710,7 @@ datasets = []
 
 jlContext = JobardLefer()
     
-dataset = h5py.File(infile)
+dataset = h5py.File(infile,'r')
 
 surfcurGroup = dataset['SurfaceCurrent']
 #print(type(surfcurGroup))
