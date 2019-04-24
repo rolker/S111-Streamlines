@@ -710,7 +710,7 @@ datasets = []
 
 jlContext = JobardLefer()
     
-dataset = h5py.File(infile)
+dataset = h5py.File(infile,'r')
 
 surfcurGroup = dataset['SurfaceCurrent']
 #print(type(surfcurGroup))
@@ -759,12 +759,13 @@ for key in surfcurGroup:
                 datasets.append(streamlines)
             break
 ##
-jsonout = json.dumps(datasets,indent=2)
+#jsonout = json.dumps(datasets,indent=2)
 #print(jsonout)
 
 if jfile is not None:    
   #file(jsonfn,'w').write(jsonout)
-    jfile.write(jsonout)
+    #jfile.write(jsonout)
+    json.dump(datasets,jfile,indent=2)
   #shutil.copy(jsonfn, jsonfn_latest)
   
     
