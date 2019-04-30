@@ -513,8 +513,8 @@ class FlowField():
     def getFlowAtIndex(self,x,y):
         #if x >= 0 and x < self.data.attrs['numberPointsLong'] and y >= 0 and y < self.data.attrs['numberPointsLat']:
         if x >= 0 and x < self.metadata.attrs['numPointsLongitudinal'] and y >= 0 and y < self.metadata.attrs['numPointsLatitudinal']:
-            speed = self.data['values'][y,x,'SurfaceCurrentSpeed']
-            dir = self.data['values'][y,x,'SurfaceCurrentDirection']
+            speed = self.data['values'][y,x][0] #,'SurfaceCurrentSpeed']
+            dir = self.data['values'][y,x][1] #,'SurfaceCurrentDirection']
             #speed = self.data[self.timestep]['Speed'][y,x]
             #dir = self.data[self.timestep]['Direction'][y,x]            
             if speed >= 0.0:
@@ -729,7 +729,7 @@ for key in surfcurGroup:
             #'DateTime' no longer in s111 version as of 5/22/18
             val = dateutil.parser.parse(group.attrs['timePoint'])
             #timestamp is really the name of the group in FlowField which in current s111 version is just Group_###
-            #print(val)            
+            print(val)            
 
             dataModel = FlowField(group,groupName,groups)
             i=i+1
@@ -757,7 +757,7 @@ for key in surfcurGroup:
                 streamlines['label'] = val.isoformat()
                 streamlines['bounds'] = bounds.asDict()
                 datasets.append(streamlines)
-            break
+            #break
 ##
 #jsonout = json.dumps(datasets,indent=2)
 #print(jsonout)
