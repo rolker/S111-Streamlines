@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.10.2)
+
+project(S111-Streamlines)
+
+find_package(HDF5 REQUIRED COMPONENTS CXX)
+
+include_directories(${HDF5_INCLUDE_DIRS})
+
+include_directories(include)
+
+add_executable(s111_info src/s111_info.cpp)
+
+target_link_libraries(s111_info ${HDF5_CXX_LIBRARIES})
