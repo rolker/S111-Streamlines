@@ -88,7 +88,7 @@ class JobardLefer:
             - iSteps: The number of intermediate points used while generating the streamlines.
 
         Notes: dTest: is a percentage of dSep. It corresponds to the minimal distance under which integration of the streamlines will be stopped in the current direction.
-                       typically, dTest = dSep * .05 gives good visual results by producing long streamlines.
+                       typically, dTest = dSep * 0.5 gives good visual results by producing long streamlines.
         '''
         self.field = field
         self.bounds = field.bounds
@@ -364,13 +364,13 @@ class JobardLefer:
         return ok
 
 
-def interpolate(v1,v2,p):
-    if v1 is None and v2 is None:
+def interpolate(f1,f2,p):
+    if f1 is None and f2 is None:
         return None
     
-    if v1 is None:
-        u2 = math.sin(v2.direction)*v2.magnitude*p
-        v2 = math.cos(v2.direction)*v2.magnitude*p
+    if f1 is None:
+        u2 = math.sin(f2.direction)*f2.magnitude*p
+        v2 = math.cos(f2.direction)*f2.magnitude*p
         mag = math.sqrt(u2*u2+v2*v2)
         dir = math.atan2(u2, v2)
 
@@ -378,18 +378,18 @@ def interpolate(v1,v2,p):
     
     ip = 1.0-p
     
-    if v2 is None:
-        u1 = math.sin(v1.direction)*v1.magnitude*ip
-        v1 = math.cos(v1.direction)*v1.magnitude*ip
+    if f2 is None:
+        u1 = math.sin(f1.direction)*f1.magnitude*ip
+        v1 = math.cos(f1.direction)*f1.magnitude*ip
         mag = math.sqrt(u1*u1+v1*v1)
         dir = math.atan2(u1, v1)
 
         return Flow(mag,dir)
 
-    u1 = math.sin(v1.direction)*v1.magnitude*ip
-    v1 = math.cos(v1.direction)*v1.magnitude*ip
-    u2 = math.sin(v2.direction)*v2.magnitude*p
-    v2 = math.cos(v2.direction)*v2.magnitude*p
+    u1 = math.sin(f1.direction)*f1.magnitude*ip
+    v1 = math.cos(f1.direction)*f1.magnitude*ip
+    u2 = math.sin(f2.direction)*f2.magnitude*p
+    v2 = math.cos(f2.direction)*f2.magnitude*p
     
     u = u1+u2
     v = v1+v2
