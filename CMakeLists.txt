@@ -8,6 +8,6 @@ include_directories(${HDF5_INCLUDE_DIRS})
 
 include_directories(include)
 
-add_executable(s111_info src/s111_info.cpp)
+add_executable(s111_to_streamlines src/s111_to_streamlines.cpp)
 
-target_link_libraries(s111_info ${HDF5_CXX_LIBRARIES})
+target_link_libraries(s111_to_streamlines ${HDF5_CXX_LIBRARIES})
