@@ -479,7 +479,7 @@ namespace s111
                 Flow f11,f12,f21,f22;
                 Index i11;
                 LatLong p12,p21,p22;
-                for(auto scg: m_surfaceCurrentGroups)
+                for(SurfaceCurrentGroup &scg: m_surfaceCurrentGroups)
                     if(scg.bounds.contains(position))
                     {
                         i11 = scg.getIndex(position);
@@ -494,7 +494,7 @@ namespace s111
                         p22.latitude = p12.latitude;
                         break;
                     }
-                for(auto scg: m_surfaceCurrentGroups)
+                for(SurfaceCurrentGroup &scg: m_surfaceCurrentGroups)
                 {
                     if(scg.bounds.contains(p12))
                     {
@@ -644,7 +644,7 @@ namespace s111
     class JobardLefer
     {
     public:
-        JobardLefer(): m_seperationFactor(1.5), m_testFactor(0.5), m_iSteps(5), m_dSepMaxFactor(3.75), m_minMag(0.001)
+        JobardLefer(): m_seperationFactor(1.5), m_testFactor(0.5), m_iSteps(5), m_dSepMaxFactor(3.75), m_minMag(0.01)
         {
         }
         
