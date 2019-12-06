@@ -158,7 +158,7 @@ class JobardLefer:
                             pass
                 y += seedSpacing.y
             x += seedSpacing.x
-        print('seed cache: ',seedCache)
+        #print('seed cache: ',seedCache)
         self.streamlines = []
         #QUESTION: why is the range only until 1? How are these values related to the incoming data?
         for level in range(self.minLevel,1):
@@ -701,12 +701,25 @@ class Bounds:
         dmin = self.min.degrees()
         dmax = self.max.degrees()
         return {'min':{'x':dmin.x, 'y':dmin.y}, 'max':{'x':dmax.x, 'y':dmax.y}}
+    
+    def asGeoJson(self):
+        dmin = self.min.degrees()
+        dmax = self.max.degrees()
+        return '['+str(dmin.x)+', '+str(dmin.y)+', '+str(dmax.x)+', '+str(dmax.y)+']'
 
 infile = sys.argv[1]
-jsonfn = infile+'.json'
-jfile=open(jsonfn,"w")
+timestep = None
+# if an argument is present after the filename, treat it as a desired timestep. If it's list, then list the timesteps.
+if len(sys.argv) > 2:
+    timestep = sys.argv[2]
+jfile = None
+if timestep != 'list':
+    jsonfn = infile+'.json'
+    jfile=open(jsonfn,"w")
+    
 
 datasets = []
+
 
 jlContext = JobardLefer()
     
@@ -719,53 +732,56 @@ for key in surfcurGroup:
     if key != 'axisNames':
         groups = surfcurGroup[key]
         #print(type(groups))
-        i = 0
         #meta
         #this loops through the time series data for each location
         for groupName in groups:
-            #print(groupName)
             group = groups[groupName]
             #each surface current group will need to have it's own flow field, more than one is a timeseries            
             #'DateTime' no longer in s111 version as of 5/22/18
-            val = dateutil.parser.parse(group.attrs['timePoint'])
-            #timestamp is really the name of the group in FlowField which in current s111 version is just Group_###
-            print(val)            
+            if 'timePoint' in group.attrs:
+                if timestep == 'list':
+                    print group.attrs['timePoint']
+                elif timestep is None or timestep == group.attrs['timePoint']:
+                    val = dateutil.parser.parse(group.attrs['timePoint'])
+                    #timestamp is really the name of the group in FlowField which in current s111 version is just Group_###
+                    print(val)            
 
-            dataModel = FlowField(group,groupName,groups)
-            i=i+1
-            #print(i)
-            
-##
-##    # generate returns dictionary with streamlines and some parameters (dSep and iSteps, which are related to spacing of the streamlines)
-            streamlines = jlContext.generate(dataModel)
-            print('streamlines created')
-            print(streamlines)
-            
-            
-##        
-##    # Turn the streamlines into a python dictionary representation so the output can be tuned into a json file.
-##    # The json file can be used with a browser based representation overlaid on Google Maps.
-            sldicts = []
-            bounds = Bounds()
-            for sl in streamlines['streamlines']:
-                b = sl.bounds
-                bounds.add(b.min)
-                bounds.add(b.max)
-                sldicts.append(sl.asDict())
-                streamlines['streamlines'] = sldicts
-                streamlines['time'] = val.isoformat()
-                streamlines['label'] = val.isoformat()
-                streamlines['bounds'] = bounds.asDict()
-                datasets.append(streamlines)
-            #break
-##
-#jsonout = json.dumps(datasets,indent=2)
-#print(jsonout)
+                    dataModel = FlowField(group,groupName,groups)
 
-if jfile is not None:    
-  #file(jsonfn,'w').write(jsonout)
-    #jfile.write(jsonout)
-    json.dump(datasets,jfile,indent=2)
-  #shutil.copy(jsonfn, jsonfn_latest)
-  
-    
+        ##
+        ##    # generate returns dictionary with streamlines and some parameters (dSep and iSteps, which are related to spacing of the streamlines)
+                    streamlines = jlContext.generate(dataModel)
+                    print('streamlines created')
+                    #print(streamlines)
+                    
+                    
+        ##        
+        ##    # Turn the streamlines into a python dictionary representation so the output can be tuned into a json file.
+        ##    # The json file can be used with a browser based representation overlaid on Google Maps.
+                    geojson_dict = {'type':'FeatureCollection', 'features':[]}
+                    bounds = Bounds()
+                    for sl in streamlines['streamlines']:
+                        sl_geojson = {'type':'Feature',
+                                      'geometry':{'type':'LineString', 'coordinates':[]},
+                                      'properties':{'index':sl.index, 'streamline_level':sl.level, 'seed_index':sl.seedIndex, 'points_levels':[], 'magnitudes':[], 'directions':[], 'dSep': streamlines['dSep'], 'iSteps':streamlines['iSteps']}
+                                      }
+                        for p in sl.points:
+                            dp = p.degrees()
+                            sl_geojson['geometry']['coordinates'].append([dp.x,dp.y])
+                            sl_geojson['properties']['points_levels'].append(p.level)
+                            sl_geojson['properties']['magnitudes'].append(p.flow.magnitude)
+                            sl_geojson['properties']['directions'].append(p.flow.direction)
+                        b = sl.bounds
+                        bounds.add(b.min)
+                        bounds.add(b.max)
+                        #sldicts.append(sl.asDict())
+                        #streamlines['streamlines'] = sldicts
+                        #streamlines['time'] = val.isoformat()
+                        #streamlines['label'] = val.isoformat()
+                        #streamlines['bounds'] = bounds.asDict()
+                        geojson_dict['features'].append(sl_geojson)
+                    geojson_dict['bbox'] = bounds.asGeoJson()
+                    gjsonfn = infile+'.'+group.attrs['timePoint']+'.json'
+                    gjfile=open(gjsonfn,"w")
+                    json.dump(geojson_dict,gjfile,indent=2)
+                    
