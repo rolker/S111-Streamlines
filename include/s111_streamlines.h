@@ -8,6 +8,7 @@
 #include <set>
 #include <deque>
 #include <cmath>
+#include <algorithm>
 
 #define S111_EARTH_RADIUS 6371000.0
 
