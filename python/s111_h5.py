@@ -1,15 +1,201 @@
-#!/usr/bin/env python
-
-import sys
-import os
-import math
 import json
-import datetime
+import math
+from multiprocessing import Pool
+from pathlib import Path
+
 import dateutil.parser
-import shutil
 import h5py
 
 earth_radius = 6371000.0
+
+def open_file(file_name):
+    data = h5py.File(file_name, "r")
+
+    main_group = data["SurfaceCurrent"]
+    keys = [k for k in main_group.keys()]
+
+    if "axisNames" in keys:
+        keys.remove("axisNames")
+    
+    return (data, main_group, keys)
+
+def list_times(file_name, time_format):
+    (data, main_group, keys) = open_file(file_name)
+
+    i = 0
+
+    for k in keys:
+        print ("    ", k)
+
+        for group in main_group[k]:
+            time = dateutil.parser.parse(main_group[k][group].attrs["timePoint"])
+            print("        Index {: 3d} — \"{}\":".format(i, group), time.strftime(time_format) if time_format else time)
+            i += 1
+
+    data.close()
+
+def generate_streamline(group_name, groups, output_path, in_memory=False):
+    data = groups[group_name]
+
+    metadata = {}
+
+    for k in ["gridSpacingLongitudinal", "gridSpacingLatitudinal", "westBoundLongitude", "southBoundLatitude", "eastBoundLongitude", "northBoundLatitude", "numPointsLongitudinal", "numPointsLatitudinal"]:
+        metadata[k] = groups.attrs[k]
+
+    if in_memory:
+        values = []
+        for y in range(len(data["values"])):
+            row = []
+            for x in range(len(data["values"][y])):
+                row.append((data["values"][y][x][0], data["values"][y][x][0]))
+            values.append(row)
+    else: 
+        values = data["values"]
+
+    flow_field = FlowField(values, metadata)
+    jl = JobardLefer()
+
+    streamlines = jl.generate(flow_field)
+
+    write_geojson(streamlines, output_path)
+
+#def generate_streamline_mt(file_name, feature_instance, group, output_directory):
+def generate_streamline_mt(arguments):
+    file_name = arguments[0]
+    feature_instance = arguments[1]
+    group = arguments[2]
+    output_directory = arguments[3]
+
+    (data, main_group, keys) = open_file(file_name)
+
+    print(f"{feature_instance}/{group} - Start")
+
+    output_path = "{}/{}.{}.json".format(output_directory, Path(file_name).stem, main_group[feature_instance][group].attrs["timePoint"].decode())
+
+    generate_streamline(group, main_group[feature_instance], output_path)
+
+    data.close()
+
+    print(f"    {feature_instance}/{group} - End")
+
+def generate_all_streamlines(file_name, process_count, output_directory):
+    (data, main_group, keys) = open_file(file_name)
+    arguments = []
+
+    for k in keys:
+        for group in main_group[k]:
+            arguments.append([file_name, k, group, output_directory])
+    data.close()
+
+    with Pool(process_count) as p:
+        p.map(generate_streamline_mt, arguments)
+
+#TODO needs testing on file with multiple Feature Instances
+def generate_indexed_streamlines(file_name, output_directory, index):
+    (data, main_group, keys) = open_file(file_name)
+
+    i = index
+
+    for k in keys:
+        l = len(main_group[k])
+
+        if i < l:
+            fi_keys = list(main_group[k].keys())
+            output_path = "{}/{}.{}.json".format(output_directory, Path(file_name).stem, main_group[k][fi_keys[i]].attrs["timePoint"].decode())
+            generate_streamline(fi_keys[i], main_group[k], output_path)
+            i = -1
+            break
+        else:
+            i -= l
+
+    if i > 0:
+        print(f"Index {index} is out of bounds.")
+
+    data.close()
+
+def generate_subdata_streamlines(file_name, output_directory, subdata):
+    (data, main_group, keys) = open_file(file_name)
+
+    if "/" in subdata:
+        (feature_instance, group) = subdata.split("/")
+
+        if not feature_instance in keys:
+            print(f"Feature Instance \"{feature_instance}\" is not in the data set")
+        elif not group in main_group[feature_instance]:
+            print(f"\"{group}\" is not in Feature Instance \"{feature_instance}\"")
+        else:
+            output_path = "{}/{}.{}.json".format(output_directory, Path(file_name).stem, main_group[feature_instance][group].attrs["timePoint"].decode())
+            generate_streamline(group, main_group[feature_instance], output_path)
+    else:
+        subdata_keys = []
+
+        for k in keys:
+            if subdata in main_group[k]:
+                subdata_keys.append(k)
+
+        if len(subdata_keys) == 0:
+            print(f"\"{subdata}\" not in any Feature Instance")
+        elif len(subdata_keys) > 1:
+            print(f"\"{subdata}\" in multiple Feature Instances:", ", ".join([f"\"{x}\"" for x in subdata_keys]))
+        else:
+            output_path = "{}/{}.{}.json".format(output_directory, Path(file_name).stem, main_group[subdata_keys[0]][subdata].attrs["timePoint"].decode())
+            generate_streamline(subdata, main_group[subdata_keys[0]], output_directory)
+
+    data.close()
+
+def generate_time_streamlines(file_name, output_directory, timestamp):
+    (data, main_group, keys) = open_file(file_name)
+    
+    time = dateutil.parser.parse(timestamp)
+
+    should_break = False
+
+    for k in keys:
+        for group in main_group[k]:
+            group_date = dateutil.parser.parse(main_group[k][group].attrs["timePoint"])
+
+            if time == group_date:
+                output_path = "{}/{}.{}.json".format(output_directory, Path(file_name).stem, main_group[k][group].attrs["timePoint"].decode())
+                generate_streamline(group, main_group[k], output_directory)
+                should_break = True
+
+        if should_break:
+            break
+
+    data.close()
+
+def write_geojson(streamlines, output_path, indent=0):
+    geojson_dict = {'type':'FeatureCollection', 'features':[]}
+    bounds = Bounds()
+    for sl in streamlines['streamlines']:
+        sl_geojson = {
+            'type':'Feature',
+            'geometry':{'type':'LineString', 'coordinates':[]},
+            'properties': {
+                'index':sl.index, 
+                'streamline_level':sl.level, 
+                'seed_index':sl.seedIndex, 
+                'points_levels':[], 
+                'magnitudes':[], 
+                'directions':[], 
+                'dSep': streamlines['dSep'], 
+                'iSteps':streamlines['iSteps']
+            }
+        }
+        for p in sl.points:
+            dp = p.degrees()
+            sl_geojson['geometry']['coordinates'].append([dp.x,dp.y])
+            sl_geojson['properties']['points_levels'].append(p.level)
+            sl_geojson['properties']['magnitudes'].append(p.flow.magnitude)
+            sl_geojson['properties']['directions'].append(p.flow.direction)
+        b = sl.bounds
+        bounds.add(b.min)
+        bounds.add(b.max)
+        geojson_dict['features'].append(sl_geojson)
+    geojson_dict['bbox'] = bounds.as_bbox()
+
+    with open(output_path, "w") as f:
+        json.dump(geojson_dict, f, indent = indent)
 
 class Streamline:
     '''Contains the points and metadata for one streamline.
@@ -92,15 +278,10 @@ class JobardLefer:
         '''
         self.field = field
         self.bounds = field.bounds
-        print('field: ',self.field)
-        
-        print('bounds: ',self.bounds)
 
         density = field.getDensity()
-        print('density:',density)
         self.dSep = density * self.separationFactor 
         self.dTest = self.dSep*self.testFactor
-        print('dSep:',self.dSep,'dTest:',self.dTest)
 
         # calculate the grid size for the points grid based on dSep where
         # lat is closest to the equator and diff in long is largest
@@ -109,7 +290,6 @@ class JobardLefer:
         else:
             minLat = min(abs(self.bounds.min.y),abs(self.bounds.max.y))
 
-        print('minLat: ',minLat)
         p0 = Point(0,minLat)
         pdx = positionFromDistanceCourse(p0, self.dSep, 1.5708)
         pdy = positionFromDistanceCourse(p0, self.dSep, 0.0)
@@ -117,10 +297,8 @@ class JobardLefer:
         dy = pdy.y - p0.y
         
         self.pointsGridCellSpacing = Point(dx, dy)
-        print('points grid cell spacing:',self.pointsGridCellSpacing)
         
         size = self.bounds.getSize()
-        print('size:',size)
         
         self.pointsGrid = {}
         
@@ -128,27 +306,23 @@ class JobardLefer:
         # this factor is kept track of in the following dict.
         self.pointsGridCellWidthFactors = {};
             
-        self.minLevel = 0;
+        self.minLevel = 0
         dSepMax = min(size.x/self.pointsGridCellSpacing.x,size.y/self.pointsGridCellSpacing.y)/self.dSepMaxFactor
         self.minLevel = int(-math.floor(math.log(dSepMax,2)))
-        print('min level:',self.minLevel)
         
         # In Jobard-Lefer paper, all the seeds are generated from the initial streamline.
         #http://web.cs.ucdavis.edu/~ma/SIGGRAPH02/course23/notes/papers/Jobard.pdf
         seedCache = []
         seedSpacing = Point(max(self.pointsGridCellSpacing.x*2,size.x/250),max(self.pointsGridCellSpacing.y*2,size.y/250))
-        print('seedSpacing:',seedSpacing)
         center = self.bounds.getCenter()
         x = seedSpacing.x/2.0
-        #print('x:',x)
+
         while x < size.x/2.0:
             y = seedSpacing.y/2.0
-            #print('y:',y)
             while y < size.y/2.0:
                 for i in range(-1,2,2):
                     for j in range(-1,2,2):
                         seed = Point(center.x+x*i,center.y+y*j)
-                        #print('seed:', seed)
                         #FIX: none of the seeds are valid - how to make sure seeds are valid? Are the seeds indexes into the data flow field? The seed values rarely change
                         #NOTE: why is this one field.pointHasValue and not self.field.pointHasValue!?
                         
@@ -158,14 +332,11 @@ class JobardLefer:
                             pass
                 y += seedSpacing.y
             x += seedSpacing.x
-        #print('seed cache: ',seedCache)
         self.streamlines = []
         #QUESTION: why is the range only until 1? How are these values related to the incoming data?
         for level in range(self.minLevel,1):
             self.level = level
             self.levelFactor = int(2**(-level))
-            print(level,self.levelFactor)
-            print('  seed cache size:',len(seedCache))
             # dSepEffective is dSep scaled for the current zoom level
             dSepEffective = self.dSep*self.levelFactor
             
@@ -196,7 +367,6 @@ class JobardLefer:
                                   self.addStreamline(newSl)
                 slStart = len(self.streamlines)
                 if self.isPointGood(seed, dSepEffective):
-                   # print(seed,seed.flow.direction,seed.flow.u,seed.flow.v)
                     newSl = Streamline(seed,self.level)
                     self.extend(newSl)
                     if len(newSl.points)>2:
@@ -407,23 +577,20 @@ class Flow():
 class FlowField():
     '''A field representing currents.
     '''
-    def __init__(self,data,timestep, metadata):
-        self.data = data
-        self.metadata = metadata #TODO: eventually, copy over just the metadata portion...this is sending the entire group of the timeseries!
-        self.timestep = timestep
+    def __init__(self,data, metadata):
+        self.metadata = metadata 
     
-        self.dx = math.radians(self.metadata.attrs['gridSpacingLongitudinal'])
-        self.dy = math.radians(self.metadata.attrs['gridSpacingLatitudinal'])
+        self.dx = math.radians(self.metadata['gridSpacingLongitudinal'])
+        self.dy = math.radians(self.metadata['gridSpacingLatitudinal'])
         
-        self.minPoint = Point(self.metadata.attrs['westBoundLongitude'],self.metadata.attrs['southBoundLatitude']).radians()
-        self.maxPoint = Point(self.metadata.attrs['eastBoundLongitude'],self.metadata.attrs['northBoundLatitude']).radians()
-        print("init flowField: hdf5 bounds")
-        print(self.metadata.attrs['westBoundLongitude'],self.metadata.attrs['southBoundLatitude'])
-        print(self.metadata.attrs['eastBoundLongitude'],self.metadata.attrs['northBoundLatitude'])
+        self.minPoint = Point(self.metadata['westBoundLongitude'],self.metadata['southBoundLatitude']).radians()
+        self.maxPoint = Point(self.metadata['eastBoundLongitude'],self.metadata['northBoundLatitude']).radians()
         
         self.bounds = Bounds()
         self.bounds.add(self.minPoint)
         self.bounds.add(self.maxPoint)
+
+        self.values = data
 
     def transport(self,startPoint,options):
         '''Calculates the next point in the direction of flow.
@@ -506,23 +673,16 @@ class FlowField():
             ret = interpolate(interpolate(f11,f12,py),interpolate(f21,f22,py),px)
                 
             return ret
-            
-            
-            
         
     def getFlowAtIndex(self,x,y):
-        #if x >= 0 and x < self.data.attrs['numberPointsLong'] and y >= 0 and y < self.data.attrs['numberPointsLat']:
-        if x >= 0 and x < self.metadata.attrs['numPointsLongitudinal'] and y >= 0 and y < self.metadata.attrs['numPointsLatitudinal']:
-            speed = self.data['values'][y,x][0] #,'SurfaceCurrentSpeed']
-            dir = self.data['values'][y,x][1] #,'SurfaceCurrentDirection']
-            #speed = self.data[self.timestep]['Speed'][y,x]
-            #dir = self.data[self.timestep]['Direction'][y,x]            
+        if x >= 0 and x < self.metadata['numPointsLongitudinal'] and y >= 0 and y < self.metadata['numPointsLatitudinal']:
+            speed = self.values[y][x][0]
+            dir = self.values[y][x][1]
             if speed >= 0.0:
                 return Flow(speed,math.radians(dir))            
 
     def getIndex(self,p):
         return ((p.x-self.minPoint.x)/self.dx,(p.y-self.minPoint.y)/self.dy)
-
     
     def getDensity(self):
         '''Calculates the grid size or data density of the field.
@@ -538,7 +698,6 @@ class FlowField():
         maxLat = max(abs(self.bounds.min.y),abs(self.bounds.max.y))
         
         return distanceCourseFromRad(Point(0.0,maxLat-self.dy),Point(self.dx,maxLat))['distance']
-
 
 def distanceCourseFromRad(p1,p2):
     '''Calculates distance and course between two points.
@@ -702,86 +861,8 @@ class Bounds:
         dmax = self.max.degrees()
         return {'min':{'x':dmin.x, 'y':dmin.y}, 'max':{'x':dmax.x, 'y':dmax.y}}
     
-    def asGeoJson(self):
+    def as_bbox(self):
         dmin = self.min.degrees()
         dmax = self.max.degrees()
-        return '['+str(dmin.x)+', '+str(dmin.y)+', '+str(dmax.x)+', '+str(dmax.y)+']'
+        return [dmin.x, dmin.y, dmax.x, dmax.y] 
 
-infile = sys.argv[1]
-timestep = None
-# if an argument is present after the filename, treat it as a desired timestep. If it's list, then list the timesteps.
-if len(sys.argv) > 2:
-    timestep = sys.argv[2]
-jfile = None
-if timestep != 'list':
-    jsonfn = infile+'.json'
-    jfile=open(jsonfn,"w")
-    
-
-datasets = []
-
-
-jlContext = JobardLefer()
-    
-dataset = h5py.File(infile,'r')
-
-surfcurGroup = dataset['SurfaceCurrent']
-#print(type(surfcurGroup))
-#NOTE: the group "SurfaceCurrent" contains sets of surface current data, each in a different geographical location
-for key in surfcurGroup:
-    if key != 'axisNames':
-        groups = surfcurGroup[key]
-        #print(type(groups))
-        #meta
-        #this loops through the time series data for each location
-        for groupName in groups:
-            group = groups[groupName]
-            #each surface current group will need to have it's own flow field, more than one is a timeseries            
-            #'DateTime' no longer in s111 version as of 5/22/18
-            if 'timePoint' in group.attrs:
-                if timestep == 'list':
-                    print group.attrs['timePoint']
-                elif timestep is None or timestep == group.attrs['timePoint']:
-                    val = dateutil.parser.parse(group.attrs['timePoint'])
-                    #timestamp is really the name of the group in FlowField which in current s111 version is just Group_###
-                    print(val)            
-
-                    dataModel = FlowField(group,groupName,groups)
-
-        ##
-        ##    # generate returns dictionary with streamlines and some parameters (dSep and iSteps, which are related to spacing of the streamlines)
-                    streamlines = jlContext.generate(dataModel)
-                    print('streamlines created')
-                    #print(streamlines)
-                    
-                    
-        ##        
-        ##    # Turn the streamlines into a python dictionary representation so the output can be tuned into a json file.
-        ##    # The json file can be used with a browser based representation overlaid on Google Maps.
-                    geojson_dict = {'type':'FeatureCollection', 'features':[]}
-                    bounds = Bounds()
-                    for sl in streamlines['streamlines']:
-                        sl_geojson = {'type':'Feature',
-                                      'geometry':{'type':'LineString', 'coordinates':[]},
-                                      'properties':{'index':sl.index, 'streamline_level':sl.level, 'seed_index':sl.seedIndex, 'points_levels':[], 'magnitudes':[], 'directions':[], 'dSep': streamlines['dSep'], 'iSteps':streamlines['iSteps']}
-                                      }
-                        for p in sl.points:
-                            dp = p.degrees()
-                            sl_geojson['geometry']['coordinates'].append([dp.x,dp.y])
-                            sl_geojson['properties']['points_levels'].append(p.level)
-                            sl_geojson['properties']['magnitudes'].append(p.flow.magnitude)
-                            sl_geojson['properties']['directions'].append(p.flow.direction)
-                        b = sl.bounds
-                        bounds.add(b.min)
-                        bounds.add(b.max)
-                        #sldicts.append(sl.asDict())
-                        #streamlines['streamlines'] = sldicts
-                        #streamlines['time'] = val.isoformat()
-                        #streamlines['label'] = val.isoformat()
-                        #streamlines['bounds'] = bounds.asDict()
-                        geojson_dict['features'].append(sl_geojson)
-                    geojson_dict['bbox'] = bounds.asGeoJson()
-                    gjsonfn = infile+'.'+group.attrs['timePoint']+'.json'
-                    gjfile=open(gjsonfn,"w")
-                    json.dump(geojson_dict,gjfile,indent=2)
-                    
